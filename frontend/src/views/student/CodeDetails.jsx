@@ -52,7 +52,7 @@ const CodeDetailsMore = () => {
                 <li>
                   <ListItemText>
                     <Typography variant="body1">
-                      This Practice Test consists of only <strong>MCQ questions.</strong>
+                      This Practice Test consists of only <strong>Coding questions.</strong>
                     </Typography>
                   </ListItemText>
                 </li>
