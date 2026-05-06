@@ -34,6 +34,7 @@ export default function Home({ onViolation, enableVoiceProctoring = false, quest
   const isReadyRef = useRef(false);
   const isDetectingRef = useRef(false);
   const lastDetectionTimeRef = useRef({});
+  const consecutiveViolationsRef = useRef({ multipleFace: 0, cellPhone: 0, identityMismatch: 0 });
   const cheatingLogRef = useRef(cheatingLog);
   const faceMatcherRef = useRef(faceMatcher);
   const onViolationRef = useRef(onViolation);
@@ -90,8 +91,8 @@ export default function Home({ onViolation, enableVoiceProctoring = false, quest
               'registered_user',
               [detection.descriptor]
             );
-            // 0.55 is a balanced threshold. Lower (0.45) is too strict and causes false positives on lighting changes.
-            setFaceMatcher(new faceapi.FaceMatcher([labeled], 0.55));
+            // 0.5 is a strict threshold. Ensures fake persons are caught, though sensitive to lighting.
+            setFaceMatcher(new faceapi.FaceMatcher([labeled], 0.5));
             setIsFaceMatcherReady(true);
             console.log('Identity Matcher Ready');
           } else {
@@ -201,30 +202,36 @@ export default function Home({ onViolation, enableVoiceProctoring = false, quest
 
   // Start Voice Proctoring (Smart Transcript Version)
   useEffect(() => {
-    if (globalAIReady && isReady && enableVoiceProctoring) {
+    if (isReady && enableVoiceProctoring) {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
       if (!SpeechRecognition) {
         console.warn("Speech Recognition API not supported in this browser.");
+        toast.error("Voice Proctoring is not supported in this browser. Please use Chrome.");
         return;
       }
 
+      console.log("🎤 Initializing Voice Proctoring...");
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
-      recognition.interimResults = false; // Wait for them to finish the sentence
+      recognition.interimResults = false;
       recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        console.log("🎤 Voice Proctoring: Mic is now listening.");
+      };
 
       recognition.onresult = (event) => {
         const current = event.resultIndex;
-        const transcript = event.results[current][0].transcript.toLowerCase();
+        const transcript = event.results[current][0].transcript.toLowerCase().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g,"");
 
         if (transcript.trim().length > 0) {
           console.log("🎤 Speech detected:", transcript);
 
           // 1. Check for explicit cheating phrases
           const suspiciousPhrases = [
-            "answer", "what is", "tell me", "help me", "which option",
-            "option a", "option b", "option c", "option d", "solve", "search"
+            "google", "siri", "alexa", "chatgpt", "answer", "what is", "tell me", "help me", "which option",
+            "option a", "option b", "option c", "option d", "solve", "search", "mobile", "phone"
           ];
           const hasSuspiciousPhrase = suspiciousPhrases.some(phrase => transcript.includes(phrase));
 
@@ -235,18 +242,15 @@ export default function Home({ onViolation, enableVoiceProctoring = false, quest
           if (questions && questions.length > 0) {
             // Combine all question text and option text into one giant string for comparison
             const allExamText = questions.map(q => {
-              let text = q.question || "";
-              if (q.description) {
-                text += " " + q.description;
-              }
+              let text = (q.question || "") + " " + (q.description || "");
               if (q.options) {
                 text += " " + q.options.map(o => o.optionText).join(" ");
               }
-              return text.toLowerCase();
+              return text.toLowerCase().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g,"");
             }).join(" ");
 
             // Extract meaningful words from their speech (longer than 2 letters)
-            spokenWords = transcript.split(/\s+/).filter(w => w.length > 2);
+            spokenWords = transcript.split(/\s+/).filter(w => w.length > 3);
 
             let matchedWords = 0;
             spokenWords.forEach(word => {
@@ -255,38 +259,37 @@ export default function Home({ onViolation, enableVoiceProctoring = false, quest
               }
             });
 
-            // If 25% or more of their meaningful words match the text on screen, 
-            // we assume they are just reading the question aloud to themselves.
-            if (spokenWords.length > 0 && (matchedWords / spokenWords.length) >= 0.25) {
+            // Increased threshold to 40% to be less aggressive in ignoring violations
+            if (spokenWords.length > 0 && (matchedWords / spokenWords.length) >= 0.40) {
               isReadingQuestion = true;
             }
           }
 
           // 3. Final Decision Logic
-          // Only trigger if word count is > 3 and not read-back
           if (hasSuspiciousPhrase) {
-            console.warn("🚨 Violation Triggered: Suspicious phrase detected.");
+            console.warn("🚨 Voice Violation: Suspicious phrase detected.");
             handleDetection('voiceDetected');
-          } else if (spokenWords.length > 3 && !isReadingQuestion) {
+          } else if (spokenWords.length >= 3 && !isReadingQuestion) {
             // More than 3 significant words that aren't on the exam paper
-            console.warn("🚨 Violation Triggered: Continuous speech not matching exam context.");
+            console.warn("🚨 Voice Violation: Continuous conversation detected.");
             handleDetection('voiceDetected');
           } else {
-            console.log("✅ Ignored: Short utterance or exam-related reading.");
+            console.log("✅ Voice Ignored: Utterance was too short or matches exam text.");
           }
         }
       };
 
       recognition.onerror = (event) => {
-        // Ignore "no speech" errors as they are normal during silent exams
-        if (event.error !== 'no-speech') {
-          console.error("Speech recognition error", event.error);
+        if (event.error === 'not-allowed') {
+          toast.error("Microphone access denied. Voice proctoring will not work.");
+        } else if (event.error !== 'no-speech') {
+          console.error("Speech recognition error:", event.error);
         }
       };
 
-      // Automatically restart listening if the browser tries to stop it
       recognition.onend = () => {
-        if (isReady && enableVoiceProctoring) {
+        // Automatically restart if still in exam mode
+        if (isReadyRef.current && enableVoiceProctoring) {
           try { recognition.start(); } catch (e) { }
         }
       };
@@ -294,7 +297,7 @@ export default function Home({ onViolation, enableVoiceProctoring = false, quest
       try {
         recognition.start();
       } catch (err) {
-        console.error("Failed to start speech recognition", err);
+        console.error("Failed to start speech recognition:", err);
       }
 
       return () => {
@@ -302,7 +305,7 @@ export default function Home({ onViolation, enableVoiceProctoring = false, quest
         recognition.stop();
       };
     }
-  }, [globalAIReady, isReady, enableVoiceProctoring, questions]);
+  }, [isReady, enableVoiceProctoring, questions]);
 
   const detect = async (net) => {
     if (isDetectingRef.current || !isReadyRef.current) return;
@@ -347,55 +350,71 @@ export default function Home({ onViolation, enableVoiceProctoring = false, quest
           }
         });
 
-        if (cellPhoneDetected) handleDetection('cellPhone');
-        if (prohibitedObjectDetected) handleDetection('prohibitedObject');
+        // --- Critical Violation Checks with Smoothing (require 2 detections) ---
+        if (cellPhoneDetected) {
+          consecutiveViolationsRef.current.cellPhone = (consecutiveViolationsRef.current.cellPhone || 0) + 1;
+          if (consecutiveViolationsRef.current.cellPhone >= 2) handleDetection('cellPhone');
+        } else {
+          consecutiveViolationsRef.current.cellPhone = 0;
+        }
+
+        if (prohibitedObjectDetected) {
+          consecutiveViolationsRef.current.prohibitedObject = (consecutiveViolationsRef.current.prohibitedObject || 0) + 1;
+          if (consecutiveViolationsRef.current.prohibitedObject >= 2) handleDetection('prohibitedObject');
+        } else {
+          consecutiveViolationsRef.current.prohibitedObject = 0;
+        }
 
         if (!faceDetected) {
           handleDetection('noFace');
         } else if (person_count > 1) {
-          handleDetection('multipleFace');
+          consecutiveViolationsRef.current.multipleFace = (consecutiveViolationsRef.current.multipleFace || 0) + 1;
+          // Immediate for multiple people as it's a clear violation
+          if (consecutiveViolationsRef.current.multipleFace >= 1) handleDetection('multipleFace');
+        } else {
+          consecutiveViolationsRef.current.multipleFace = 0;
         }
 
         // 2. Short pause to let WebGL breathe
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, 200));
 
-        // 3. Run Face-API (Identity Match)
-        // ONLY if exactly one person is present and matcher is ready
-        if (globalFaceapiReady && faceMatcherRef.current && person_count === 1 && webcamRef.current?.video) {
+        // 3. Run Face-API (Identity Match & Multi-Face Detection)
+        if (globalFaceapiReady && faceMatcherRef.current && webcamRef.current?.video) {
           const currentVideo = webcamRef.current.video;
           if (currentVideo.readyState === 4) {
-            const detection = await faceapi
-              .detectSingleFace(currentVideo, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }))
+            const detections = await faceapi
+              .detectAllFaces(currentVideo, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }))
               .withFaceLandmarks()
-              .withFaceDescriptor();
+              .withFaceDescriptors();
 
-            if (detection) {
+            if (detections.length > 1) {
+              handleDetection('multipleFace');
+            } else if (detections.length === 1) {
+              const detection = detections[0];
               const match = faceMatcherRef.current.findBestMatch(detection.descriptor);
-              // Label will be 'registered_user' if match succeeded, 'unknown' if not
+              
               if (match.label === 'unknown') {
-                // TEMPORARILY DISABLED: The FaceAPI matching algorithm is causing
-                // frequent false-positives for the registered user based on lighting/angles.
-                console.warn('Identity mismatch detected, but auto-submit is disabled.');
-                // handleDetection('identityMismatch');
+                consecutiveViolationsRef.current.identityMismatch = (consecutiveViolationsRef.current.identityMismatch || 0) + 1;
+                // Require 2 consecutive detections (approx 2 seconds) to be sure it's not a glitch
+                if (consecutiveViolationsRef.current.identityMismatch >= 2) {
+                  console.warn('🚨 Unauthorized person detected. Distance:', match.distance);
+                  handleDetection('identityMismatch');
+                }
               } else {
-                // If it's the registered user, check for eye gaze / head pose using 68 point landmarks
+                consecutiveViolationsRef.current.identityMismatch = 0;
+                // It's the registered user, check for eye gaze
                 const landmarks = detection.landmarks.positions;
                 if (landmarks && landmarks.length >= 68) {
                   const leftEdge = landmarks[0];
                   const rightEdge = landmarks[16];
-                  const nose = landmarks[30]; // Nose bridge/tip
+                  const nose = landmarks[30];
 
                   if (leftEdge && rightEdge && nose) {
                     const leftDist = nose.x - leftEdge.x;
                     const rightDist = rightEdge.x - nose.x;
 
-                    // Prevent division by zero and logical anomalies
                     if (rightDist > 0 && leftDist > 0) {
                       const ratio = leftDist / rightDist;
-
-                      // Significant deviation indicates face turned sharply left or right
-                      // Increased deviation threshold indicates face turned sharply left or right
-                      // Used 3.0 and 0.33 for standard threshold (less sensitive than default 4.0/0.25 which was over-sensitive)
                       if (ratio > 3.0 || ratio < 0.33) {
                         handleDetection('eyeGaze');
                       }
@@ -403,9 +422,7 @@ export default function Home({ onViolation, enableVoiceProctoring = false, quest
                   }
                 }
               }
-            } else {
-              // COCO-SSD detected a person's body, but Face-API couldn't find a frontal face!
-              // This happens when the student turns their head completely away or covers their face.
+            } else if (person_count > 0 && detections.length === 0) {
               handleDetection('eyeGaze');
             }
           }

@@ -82,20 +82,23 @@ const TestPage = () => {
       (parseInt(finalLog.eyeGazeCount) || 0);
 
     // --- BALANCED 5-STEP PROCTORING POLICY ---
-    // Rule: Total of 5 violations allowed before auto-submit.
-    // Each violation has a 5-second cooldown in the webcam.
+    // Rule: Total of 15 violations allowed before auto-submit.
+    // HOWEVER: 'multipleFace' and 'identityMismatch' are critical violations that trigger IMMEDIATE termination.
     const strikeLimit = 15;
+    const isCriticalViolation = violationType === 'multipleFace' || violationType === 'identityMismatch';
 
-    if (totalViolations < strikeLimit && violationType && violationType !== 'exited_fullscreen') {
-      if (totalViolations <= 2) {
-        // Violations 1-2: Quiet notification
-        toast.warning(`Security Alert: ${violationType} (${totalViolations}/15)`, { autoClose: 3000 });
-      } else if (totalViolations >= 3 && totalViolations < 10) {
-        // Violation 3-9: Official Warning
-        swal('Security Warning', `Official Warning: ${violationType} detected. Please stay focused. (${totalViolations}/15)`, 'warning');
-      } else if (totalViolations >= 10 && totalViolations < 15) {
-        // Violation 10+: Final Warning
-        swal('FINAL WARNING', `FINAL WARNING: If you reach 15 violations, your test will be AUTO-SUBMITTED. (${totalViolations}/15)`, 'error');
+    console.log(`🛡️ Proctoring Event: ${violationType} | Total Strikes: ${totalViolations}/${strikeLimit}`);
+
+    if (totalViolations < strikeLimit && violationType && violationType !== 'exited_fullscreen' && !isCriticalViolation) {
+      if (totalViolations <= 5) {
+        // Violations 1-5: Warning
+        swal('Security Alert', `Security Violation Detected: ${violationType} (${totalViolations}/${strikeLimit}). Please stay focused and ensure you are alone in a well-lit room.`, 'warning');
+      } else if (totalViolations > 5 && totalViolations < 12) {
+        // Violation 6-11: Official Warning
+        swal('OFFICIAL WARNING', `Official Warning: Multiple violations (${totalViolations}/${strikeLimit}) detected. Further violations will result in automatic test submission.`, 'warning');
+      } else if (totalViolations >= 12 && totalViolations < 15) {
+        // Violation 12+: Final Warning
+        swal('FINAL WARNING', `FINAL WARNING: You have ${strikeLimit - totalViolations} strikes left. If you reach ${strikeLimit}, your test will be AUTO-SUBMITTED IMMEDIATELY.`, 'error');
       }
       
       if (!forcedLog) updateCheatingLog(finalLog);
@@ -105,9 +108,13 @@ const TestPage = () => {
     try {
       setIsSubmitting(true);
       if (violationType === 'exited_fullscreen') {
-        swal('Auto-Submitting', `Test auto-submitted because you exited full screen mode.`, 'error');
+        await swal('Auto-Submitting', `Test auto-submitted because you exited full screen mode.`, 'error');
+      } else if (violationType === 'multipleFace') {
+        await swal('Cheating Detected', `Another person was detected in your camera feed. Test terminated for security.`, 'error');
+      } else if (violationType === 'identityMismatch') {
+        await swal('Identity Theft Detected', `The person attempting the exam does not match the registered student. Test terminated for security.`, 'error');
       } else if (violationType) {
-        swal('Auto-Submitting', `Auto-submitting test due to multiple security violations.`, 'error');
+        await swal('Auto-Submitting', `Auto-submitting test due to excessive security violations (${totalViolations}/${strikeLimit}).`, 'error');
       }
 
       const updatedLog = {

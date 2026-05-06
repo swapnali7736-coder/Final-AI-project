@@ -2,6 +2,7 @@ import asyncHandler from "express-async-handler";
 import Result from "../models/resultModel.js";
 import Question from "../models/quesModel.js";
 import CodingQuestion from "../models/codingQuestionModel.js";
+import CodingSubmission from "../models/codingSubmissionModel.js";
 
 // @desc    Save exam result
 // @route   POST /api/results
@@ -12,6 +13,17 @@ const saveResult = asyncHandler(async (req, res) => {
   if (!examId || !answers) {
     res.status(400);
     throw new Error("Please provide examId and answers");
+  }
+
+  // Check if result already exists for this user and exam
+  const existingResult = await Result.findOne({
+    examId,
+    userId: req.user._id,
+  });
+
+  if (existingResult) {
+    res.status(400);
+    throw new Error("You have already submitted this exam.");
   }
 
   // Get all questions for this exam to calculate marks
@@ -63,25 +75,19 @@ const getResultsByExamId = asyncHandler(async (req, res) => {
     .populate("userId", "name email")
     .sort({ createdAt: -1 });
 
-  // Get coding questions and submissions
-  const codingQuestions = await CodingQuestion.find({ examId }).populate(
-    "submittedAnswer"
-  );
+  // Get coding submissions for this exam
+  const codingSubmissions = await CodingSubmission.find({ examId }).populate("questionId");
 
   // Combine MCQ and coding results
   const combinedResults = results.map((result) => {
-    const studentCodingSubmissions = codingQuestions
-      .filter(
-        (q) =>
-          q.submittedAnswer &&
-          q.submittedAnswer.userId?.toString() === result.userId._id.toString()
-      )
-      .map((q) => ({
-        question: q.question,
-        code: q.submittedAnswer.code,
-        language: q.submittedAnswer.language,
-        status: q.submittedAnswer.status,
-        executionTime: q.submittedAnswer.executionTime,
+    const studentCodingSubmissions = codingSubmissions
+      .filter((sub) => sub.userId.toString() === result.userId._id.toString())
+      .map((sub) => ({
+        question: sub.questionId?.question || "Unknown Question",
+        code: sub.code,
+        language: sub.language,
+        status: sub.status,
+        executionTime: sub.executionTime,
       }));
 
     return {
@@ -110,18 +116,18 @@ const getUserResults = asyncHandler(async (req, res) => {
   // Get coding submissions for each exam
   const resultsWithCoding = await Promise.all(
     results.map(async (result) => {
-      const codingQuestions = await CodingQuestion.find({
+      const submissions = await CodingSubmission.find({
         examId: result.examId,
-        "submittedAnswer.userId": req.user._id,
-      }).select("question submittedAnswer");
+        userId: req.user._id,
+      }).populate("questionId");
 
       return {
         ...result.toObject(),
-        codingSubmissions: codingQuestions.map((q) => ({
-          question: q.question,
-          code: q.submittedAnswer.code,
-          language: q.submittedAnswer.language,
-          status: q.submittedAnswer.status,
+        codingSubmissions: submissions.map((sub) => ({
+          question: sub.questionId?.question || "Unknown Question",
+          code: sub.code,
+          language: sub.language,
+          status: sub.status,
         })),
       };
     })
@@ -168,25 +174,19 @@ const getAllResults = asyncHandler(async (req, res) => {
     .populate("userId", "name email")
     .sort({ createdAt: -1 });
 
-  // Get coding questions and submissions
-  const codingQuestions = await CodingQuestion.find().populate(
-    "submittedAnswer"
-  );
+  // Get all coding submissions
+  const codingSubmissions = await CodingSubmission.find().populate("questionId");
 
   // Combine MCQ and coding results
   const combinedResults = results.map((result) => {
-    const studentCodingSubmissions = codingQuestions
-      .filter(
-        (q) =>
-          q.submittedAnswer &&
-          q.submittedAnswer.userId?.toString() === result.userId._id.toString()
-      )
-      .map((q) => ({
-        question: q.question,
-        code: q.submittedAnswer.code,
-        language: q.submittedAnswer.language,
-        status: q.submittedAnswer.status,
-        executionTime: q.submittedAnswer.executionTime,
+    const studentCodingSubmissions = codingSubmissions
+      .filter((sub) => sub.userId.toString() === result.userId._id.toString())
+      .map((sub) => ({
+        question: sub.questionId?.question || "Unknown Question",
+        code: sub.code,
+        language: sub.language,
+        status: sub.status,
+        executionTime: sub.executionTime,
       }));
 
     return {
@@ -201,10 +201,27 @@ const getAllResults = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Check if current user has already attempted an exam
+// @route   GET /api/results/check/:examId
+// @access  Private
+const checkAttempt = asyncHandler(async (req, res) => {
+  const { examId } = req.params;
+  const result = await Result.findOne({
+    examId,
+    userId: req.user._id,
+  });
+
+  res.status(200).json({
+    hasAttempted: !!result,
+    result: result || null,
+  });
+});
+
 export {
   saveResult,
   getResultsByExamId,
   getUserResults,
   toggleResultVisibility,
   getAllResults,
+  checkAttempt,
 };

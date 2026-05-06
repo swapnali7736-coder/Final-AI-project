@@ -25,7 +25,7 @@ export const cheatingLogApiSlice = apiSlice.injectEndpoints({
     deleteCheatingLogs: builder.mutation({
       query: (examId) => ({
         url: `${CHEATING_LOGS_URL}/cheatingLogs/${examId}`,
-        method: 'POST', // Using POST for deletion to avoid method collision if needed, or DELETE
+        method: 'DELETE',
       }),
     }),
   }),

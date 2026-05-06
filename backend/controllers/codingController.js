@@ -1,4 +1,5 @@
 import CodingQuestion from "../models/codingQuestionModel.js";
+import CodingSubmission from "../models/codingSubmissionModel.js";
 import asyncHandler from "express-async-handler";
 
 // @desc    Submit a coding answer
@@ -12,27 +13,29 @@ const submitCodingAnswer = asyncHandler(async (req, res) => {
     throw new Error("Please provide all required fields");
   }
 
-  // Find the existing question
+  // Find the existing question to get the examId
   const question = await CodingQuestion.findById(questionId);
   if (!question) {
     res.status(404);
     throw new Error("Question not found");
   }
 
-  // Update the question with the submitted answer
-  question.submittedAnswer = {
-    code,
-    language,
-    status: "pending", // Initial status
-    executionTime: 0, // Will be updated after execution
-  };
-
-  // Save the updated question
-  const updatedQuestion = await question.save();
+  // Update or create the submission for this user/question
+  const submission = await CodingSubmission.findOneAndUpdate(
+    { userId: req.user._id, questionId },
+    {
+      code,
+      language,
+      examId: question.examId,
+      status: "pending",
+      executionTime: 0,
+    },
+    { upsert: true, new: true }
+  );
 
   res.status(200).json({
     success: true,
-    data: updatedQuestion,
+    data: submission,
   });
 });
 
@@ -142,7 +145,8 @@ const getCodingQuestionsByExamId = asyncHandler(async (req, res) => {
   try {
     const question = await CodingQuestion.findOne({
       examId: examId.toString(),
-    });
+    }).select("-submittedAnswer"); // Never return the legacy global submission
+    
     console.log("Found question:", question);
 
     if (!question) {
@@ -150,9 +154,18 @@ const getCodingQuestionsByExamId = asyncHandler(async (req, res) => {
       throw new Error(`No coding question found for exam: ${examId}`);
     }
 
+    // Fetch this user's submission for this question
+    const submission = await CodingSubmission.findOne({
+      userId: req.user._id,
+      questionId: question._id,
+    });
+
     res.status(200).json({
       success: true,
-      data: question,
+      data: {
+        ...question.toObject(),
+        userSubmission: submission,
+      },
     });
   } catch (error) {
     console.error("Error fetching coding question:", error);

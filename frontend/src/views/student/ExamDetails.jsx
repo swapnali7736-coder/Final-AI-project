@@ -15,13 +15,14 @@ import Grid from '@mui/material/Grid';
 import Link from '@mui/material/Link';
 import Paper from '@mui/material/Paper';
 import { uniqueId } from 'lodash';
-import * as React from 'react';
-import { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useGetQuestionsQuery } from 'src/slices/examApiSlice';
 import IdentityVerification from './Components/IdentityVerification';
 import { useSelector } from 'react-redux';
+import { useCheatingLog } from 'src/context/CheatingLogContext';
+import axiosInstance from 'src/axios';
 
 function Copyright(props) {
   return (
@@ -52,6 +53,30 @@ const DescriptionAndInstructions = () => {
   // accetp
   const [certify, setCertify] = useState(false);
   const [isVerified, setIsVerified] = useState(false);
+  const [hasAlreadyAttempted, setHasAlreadyAttempted] = useState(false);
+  const [checkingAttempt, setCheckingAttempt] = useState(true);
+
+  const { resetCheatingLog } = useCheatingLog();
+
+  // Check if current user has already submitted this exam
+  useEffect(() => {
+    const verifyAttempt = async () => {
+      if (examId) {
+        try {
+          setCheckingAttempt(true);
+          const response = await axiosInstance.get(`/api/users/results/check/${examId}`);
+          if (response.data.hasAttempted) {
+            setHasAlreadyAttempted(true);
+          }
+        } catch (err) {
+          console.error("Error checking exam attempt:", err);
+        } finally {
+          setCheckingAttempt(false);
+        }
+      }
+    };
+    verifyAttempt();
+  }, [examId]);
 
   const handleCertifyChange = () => {
     setCertify(!certify);
@@ -61,6 +86,9 @@ const DescriptionAndInstructions = () => {
     const isValid = true; // Replace with your date validation logic
     console.log('Test link');
     if (isValid && isVerified) {
+      // Reset the cheating log for a fresh start of the exam
+      resetCheatingLog(examId);
+      
       // Replace 'examid' and 'TestId' with the actual values
       navigate(`/exam/${examId}/${testId}`);
     } else if (!isVerified) {
@@ -189,9 +217,17 @@ const DescriptionAndInstructions = () => {
                 label="I certify that I have carefully read and agree to all of the instructions mentioned above"
               />
               <div style={{ display: 'flex', padding: '2px', margin: '10px' }}>
-                <Button variant="contained" color="primary" disabled={!certify} onClick={handleTest}>
-                  Start Test
-                </Button>
+                {hasAlreadyAttempted ? (
+                  <Typography variant="h5" color="error" fontWeight="bold">
+                    You have already submitted this exam and cannot take it again.
+                  </Typography>
+                ) : checkingAttempt ? (
+                  <Button variant="contained" disabled>Checking Status...</Button>
+                ) : (
+                  <Button variant="contained" color="primary" disabled={!certify} onClick={handleTest}>
+                    Start Test
+                  </Button>
+                )}
               </div>
             </Stack>
           </>

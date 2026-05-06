@@ -1,3 +1,3 @@
-// asc
+// no user input
 
 // Write your code here...

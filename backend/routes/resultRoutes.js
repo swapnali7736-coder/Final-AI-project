@@ -1,11 +1,12 @@
 import express from "express";
 import { protect } from "../middleware/authMiddleware.js";
 import {
+  toggleResultVisibility,
+  getAllResults,
+  checkAttempt,
   saveResult,
   getResultsByExamId,
   getUserResults,
-  toggleResultVisibility,
-  getAllResults,
 } from "../controllers/resultController.js";
 
 const resultRoutes = express.Router();
@@ -24,6 +25,9 @@ resultRoutes.get("/results/exam/:examId", getResultsByExamId);
 
 // Get results for current user
 resultRoutes.get("/results/user", getUserResults);
+
+// Check if current user has already attempted an exam
+resultRoutes.get("/results/check/:examId", checkAttempt);
 
 // Toggle result visibility
 resultRoutes.put(

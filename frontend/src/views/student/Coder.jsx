@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Editor } from '@monaco-editor/react';
 import axiosInstance from '../../axios';
 import Webcam from '../student/Components/WebCam';
@@ -44,20 +44,25 @@ export default function Coder() {
     }
   }, [userInfo]);
 
-  // Fetch coding question when component mounts
+  // Check if current user has already submitted this exam
   useEffect(() => {
-    const fetchCodingQuestion = async () => {
+    const verifyAttempt = async () => {
       try {
         setIsLoading(true);
         const response = await axiosInstance.get(`/api/coding/questions/exam/${examId}`, {
           withCredentials: true,
         });
         if (response.data.success && response.data.data) {
-          setQuestionId(response.data.data._id);
-          setQuestion(response.data.data);
-          // Set initial code if there's a template or description
-          if (response.data.data.description) {
-            setCode(`// ${response.data.data.description}\n\n// Write your code here...`);
+          const questionData = response.data.data;
+          setQuestionId(questionData._id);
+          setQuestion(questionData);
+          
+          // Load existing code if student has already worked on it
+          if (questionData.userSubmission && questionData.userSubmission.code) {
+            setCode(questionData.userSubmission.code);
+            setLanguage(questionData.userSubmission.language || 'javascript');
+          } else if (questionData.description) {
+            setCode(`// ${questionData.description}\n\n// Write your code here...`);
           }
         } else {
           toast.error('No coding question found for this exam. Please contact your teacher.');
@@ -71,7 +76,7 @@ export default function Coder() {
     };
 
     if (examId) {
-      fetchCodingQuestion();
+      verifyAttempt();
     }
   }, [examId]);
 
@@ -129,14 +134,17 @@ export default function Coder() {
       (parseInt(finalLog.eyeGazeCount) || 0);
 
     const strikeLimit = 15;
+    const isCriticalViolation = violationType === 'multipleFace' || violationType === 'identityMismatch';
 
-    if (totalViolations < strikeLimit && violationType && violationType !== 'exited_fullscreen') {
-      if (totalViolations <= 2) {
-        toast.warning(`Security Alert: ${violationType} (${totalViolations}/15)`, { autoClose: 3000 });
-      } else if (totalViolations >= 3 && totalViolations < 10) {
-        swal('Security Warning', `Official Warning: ${violationType} detected. Please stay focused. (${totalViolations}/15)`, 'warning');
-      } else if (totalViolations >= 10 && totalViolations < 15) {
-        swal('FINAL WARNING', `FINAL WARNING: If you reach 15 violations, your test will be AUTO-SUBMITTED. (${totalViolations}/15)`, 'error');
+    console.log(`🛡️ Proctoring Event: ${violationType} | Total Strikes: ${totalViolations}/${strikeLimit}`);
+
+    if (totalViolations < strikeLimit && violationType && violationType !== 'exited_fullscreen' && !isCriticalViolation) {
+      if (totalViolations <= 5) {
+        swal('Security Alert', `Security Violation Detected: ${violationType} (${totalViolations}/${strikeLimit}). Please stay focused and ensure you are alone in a well-lit room.`, 'warning');
+      } else if (totalViolations > 5 && totalViolations < 12) {
+        swal('OFFICIAL WARNING', `Official Warning: Multiple violations (${totalViolations}/${strikeLimit}) detected. Further violations will result in automatic test submission.`, 'warning');
+      } else if (totalViolations >= 12 && totalViolations < 15) {
+        swal('FINAL WARNING', `FINAL WARNING: You have ${strikeLimit - totalViolations} strikes left. If you reach ${strikeLimit}, your test will be AUTO-SUBMITTED IMMEDIATELY.`, 'error');
       }
       
       if (!forcedLog) updateCheatingLog(finalLog);
@@ -146,9 +154,13 @@ export default function Coder() {
     try {
       setIsSubmitting(true);
       if (violationType === 'exited_fullscreen') {
-        swal('Auto-Submitting', `Test auto-submitted because you exited full screen mode.`, 'error');
+        await swal('Auto-Submitting', `Test auto-submitted because you exited full screen mode.`, 'error');
+      } else if (violationType === 'multipleFace') {
+        await swal('Cheating Detected', `Another person was detected in your camera feed. Test terminated for security.`, 'error');
+      } else if (violationType === 'identityMismatch') {
+        await swal('Identity Theft Detected', `The person attempting the exam does not match the registered student. Test terminated for security.`, 'error');
       } else if (violationType) {
-        swal('Auto-Submitting', `Auto-submitting test due to multiple security violations.`, 'error');
+        await swal('Auto-Submitting', `Auto-submitting test due to excessive security violations (${totalViolations}/${strikeLimit}).`, 'error');
       }
 
       // First submit the code if possible
@@ -256,6 +268,8 @@ export default function Coder() {
     await handleTestSubmission();
   };
 
+  const questionsArray = useMemo(() => (question ? [question] : []), [question]);
+
   return (
     <Box sx={{ p: 3, height: '100vh', display: 'flex', flexDirection: 'column' }}>
       {isLoading ? (
@@ -344,7 +358,7 @@ export default function Coder() {
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                   onViolation={handleTestSubmission}
                   enableVoiceProctoring={true}
-                  questions={question ? [question] : []}
+                  questions={questionsArray}
                 />
               </Paper>
             </Box>

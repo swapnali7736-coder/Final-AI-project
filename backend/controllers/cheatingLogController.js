@@ -71,4 +71,14 @@ const getCheatingLogsByExamId = asyncHandler(async (req, res) => {
   res.status(200).json(cheatingLogs);
 });
 
-export { saveCheatingLog, getCheatingLogsByExamId };
+// @desc Delete all cheating logs for a specific exam
+// @route DELETE /api/cheatingLogs/:examId
+// @access Private
+const deleteCheatingLogsByExamId = asyncHandler(async (req, res) => {
+  const examId = req.params.examId;
+  await CheatingLog.deleteMany({ examId });
+
+  res.status(200).json({ message: "Cheating logs cleared successfully" });
+});
+
+export { saveCheatingLog, getCheatingLogsByExamId, deleteCheatingLogsByExamId };

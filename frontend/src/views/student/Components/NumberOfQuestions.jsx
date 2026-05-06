@@ -31,6 +31,8 @@ const NumberOfQuestions = ({ questionLength, submitTest, examDurationInSeconds }
   }, [examDurationInSeconds]);
 
   useEffect(() => {
+    if (examDurationInSeconds <= 0) return;
+
     const timer = setInterval(() => {
       setTimeLeft((prevTime) => {
         if (prevTime <= 1) {
@@ -43,7 +45,7 @@ const NumberOfQuestions = ({ questionLength, submitTest, examDurationInSeconds }
     }, 1000);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [examDurationInSeconds]);
 
   const handleTimeUp = () => {
     toast.warning('Time is up! Submitting your test...');
